@@ -1,0 +1,17 @@
+node_modules/
+dist/
+
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+
+.env
+.env.*
+*.log
+
+.hermes/
+.hermes-backups/
+.ralph/
+
+remixed-*.tsx
