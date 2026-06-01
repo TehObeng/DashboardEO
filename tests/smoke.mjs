@@ -49,7 +49,7 @@ try {
   await nav("Quotations");
   await page.getByRole("button", { name: /New Quote/ }).click();
   await page.waitForSelector("text=New Quotation", { timeout: 5000 });
-  await page.locator('select').first().selectOption({ index: 1 });
+  await page.getByLabel("Client *").selectOption({ index: 1 });
   await page.getByLabel("Generated Date").fill("2026-06-01");
   await page.getByLabel("Event Date").fill("2026-06-20");
   await page.locator('input[placeholder="e.g. Santos Wedding"]').fill("E2E Smoke Event");
@@ -111,6 +111,9 @@ try {
   await page.getByLabel("Invoice Payment Amount").fill("200000");
   await page.getByRole("button", { name: /Save Payment/ }).click();
   await page.waitForSelector("text=Final Invoice Payment", { timeout: 5000 });
+  const paidInvoiceCard = page.locator('div.bg-white.rounded-2xl').filter({ hasText: "Final Invoice Payment" }).first();
+  await paidInvoiceCard.getByText("Final Invoice Payment").click();
+  await paidInvoiceCard.getByText("Payment Ledger").waitFor({ state: "visible", timeout: 5000 });
 
   await nav("Events");
   await page.waitForSelector("text=Event Filters Summary", { timeout: 5000 });
@@ -121,7 +124,7 @@ try {
   await page.getByPlaceholder("Search events").fill("E2E Smoke Event");
   const e2eEventCard = page.locator('div.space-y-4 > div.bg-white.rounded-2xl').filter({ hasText: "E2E Smoke Event" }).first();
   await e2eEventCard.waitFor({ state: "visible", timeout: 5000 });
-  await e2eEventCard.getByRole("button", { name: /^Quotation$/ }).click();
+  await e2eEventCard.getByText("E2E Smoke Event").first().click();
   await bodyIncludes("Rincian Quotation");
   await bodyIncludes("E2E Sales Item A");
   await e2eEventCard.getByRole("button", { name: /^Purchase$/ }).click();
@@ -147,6 +150,9 @@ try {
   await page.waitForSelector("text=Worker Payment 1", { timeout: 5000 });
   await bodyIncludes("PAID");
   await bodyIncludes("PENDING");
+  const lizaWorkerCard = page.locator('div.bg-white.rounded-2xl').filter({ hasText: "Liza Manalo" }).first();
+  await lizaWorkerCard.getByText("Liza Manalo").first().click();
+  await page.locator('div.bg-white.rounded-2xl').filter({ hasText: "Liza Manalo — Payment & Income Details" }).first().waitFor({ state: "visible", timeout: 5000 });
 
   await nav("Purchases");
   await page.waitForSelector("text=PO No.", { timeout: 3000 });
@@ -175,6 +181,9 @@ try {
   await page.waitForSelector("text=Smoke Decor Package", { timeout: 5000 });
   await page.getByPlaceholder("Search PO, vendor, item, event").fill("Smoke Decor Package");
   await bodyIncludes("Rp225.000,00");
+  const smokePOCard = page.locator('div.bg-white.rounded-2xl').filter({ hasText: "Smoke Decor Package" }).first();
+  await smokePOCard.getByText("Smoke Decor Package").first().click();
+  await smokePOCard.getByText("Item Descriptions").waitFor({ state: "visible", timeout: 5000 });
   await page.getByRole("button", { name: /^Payment$/ }).first().click();
   await page.getByLabel(/Payment Amount/i).fill("100000");
   await page.getByRole("button", { name: /^Save Payment$/ }).click();
@@ -216,14 +225,14 @@ try {
   const legacyReportButtons = await page.locator("button").filter({ hasText: /^Purchases by Category$/ }).count();
   if (legacyReportButtons) throw new Error("Legacy report category button grid still rendered");
   await page.getByLabel("Report Category").selectOption("purchases");
-  await page.getByRole("heading", { name: /^Purchases by Category$/ }).waitFor({ state: "visible", timeout: 5000 });
+  await page.getByRole("heading", { name: /^Purchases Summary$/ }).waitFor({ state: "visible", timeout: 5000 });
   await bodyIncludes("Smoke Decor Package");
   await page.getByRole("button", { name: /Print Selected Report/ }).click();
-  await page.locator(".print-document").filter({ hasText: "DashboardEO Report — Purchases by Category" }).first().waitFor({ state: "visible", timeout: 5000 });
+  await page.locator(".print-document").filter({ hasText: "DashboardEO Report — Purchases Summary" }).first().waitFor({ state: "visible", timeout: 5000 });
   await page.locator(".print-document").filter({ hasText: "Smoke Decor Package" }).first().waitFor({ state: "visible", timeout: 5000 });
   await page.getByRole("button", { name: /Print \/ Save PDF/ }).waitFor({ state: "visible", timeout: 5000 });
   await page.locator("button").filter({ hasText: "×" }).last().click();
-  await page.waitForSelector("text=DashboardEO Report — Purchases by Category", { state: "hidden", timeout: 5000 });
+  await page.waitForSelector("text=DashboardEO Report — Purchases Summary", { state: "hidden", timeout: 5000 });
 
   const lockId = Date.now() + 900000;
   const lockClient = state.clients?.[0]?.name || "Maria Santos";

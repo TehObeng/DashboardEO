@@ -57,12 +57,14 @@ export const PURCHASE_CATS = ["Materials", "Equipment", "Catering", "Transportat
 export const EVENT_TYPES = ["Wedding", "Corporate", "Birthday", "Concert", "Equipment Rental", "Other"];
 export const VENDOR_CATS = ["Flowers & Décor", "Sound & Lights", "Photography", "Equipment Rental", "Catering", "Transportation", "Other"];
 export const REPORT_CATEGORIES = [
-  { id: "all", label: "Full Report" },
-  { id: "finance", label: "Finance Detail" },
-  { id: "pdr", label: "PDR & Prints" },
-  { id: "events", label: "Events Breakdown" },
-  { id: "transactions", label: "Transaction Breakdown" },
-  { id: "purchases", label: "Purchases by Category" },
+  { id: "all", label: "All Page Summaries" },
+  { id: "events", label: "Events Summary" },
+  { id: "quotes", label: "Quotations Summary" },
+  { id: "invoices", label: "Invoices Summary" },
+  { id: "purchases", label: "Purchases Summary" },
+  { id: "clients", label: "Clients Summary" },
+  { id: "vendors", label: "Vendors Summary" },
+  { id: "workers", label: "Workers Summary" },
 ];
 export const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 export const DEFAULT_STATE = {

@@ -47,6 +47,7 @@ import { FinanceTab } from "./tabs/FinanceTab";
 import { ReportsTab } from "./tabs/ReportsTab";
 import { SettingsTab } from "./tabs/SettingsTab";
 import { AuditLogPanel } from "./components/AuditLogPanel";
+import { ActionButton, EmptyState, FilterBar, PageHeader, PageShell, PrimaryButton, RecordCard, SummaryCard, SummaryGrid } from "./components/OperationalLayout";
 
 const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, "");
 const apiUrl = (path) => `${BASE_PATH}${path}`;
@@ -58,6 +59,13 @@ const safeJson = async (res) => {
 const Avatar = ({name,size="md",color="from-red-500 to-red-700"}) => {
   const sz = size==="lg"?"w-14 h-14 text-xl":size==="sm"?"w-8 h-8 text-xs":"w-10 h-10 text-sm";
   return <div className={`${sz} rounded-xl bg-gradient-to-br ${color} flex items-center justify-center text-white font-bold flex-shrink-0`}>{name?.charAt(0)?.toUpperCase()||"?"}</div>;
+};
+
+const toggleCardKey = (e, action) => {
+  if (e.target !== e.currentTarget) return;
+  if (e.key !== "Enter" && e.key !== " ") return;
+  e.preventDefault();
+  action();
 };
 
 // ─── MODALS ───────────────────────────────────────────────────────────────────
@@ -481,6 +489,230 @@ function InvoicePaymentModal({invoice,onSave,onClose,sym}) {
   </Modal>;
 }
 
+function QuotationsTab({quotes, setQuotes, events, setEvents, setInvoices, setTab, setEditingQuote, setShowQuoteModal, setPrintQuote, setPendingPO, sym}) {
+  const [q,setQ] = useState("");
+  const [status,setStatus] = useState("all");
+  const [eventFilter,setEventFilter] = useState("all");
+  const [sort,setSort] = useState("newest");
+  const filtered = [...quotes].filter(row => {
+    const ev = events.find(e => e.id === Number(row.eventId));
+    const hay = [row.number,row.client,row.status,row.description,row.eventTitle,ev?.title,...(row.items||[]).flatMap(it=>[it.desc,it.item,it.note,it.description])].join(" ").toLowerCase();
+    return (!q || hay.includes(q.toLowerCase())) && (status==="all" || row.status===status) && (eventFilter==="all" || Number(row.eventId)===Number(eventFilter));
+  }).sort((a,b)=>sort==="oldest" ? new Date(a.generatedDate||a.date||0)-new Date(b.generatedDate||b.date||0) : new Date(b.generatedDate||b.date||0)-new Date(a.generatedDate||a.date||0));
+  const totalQuoted = filtered.reduce((s,row)=>s+Number(row.total||0),0);
+  const linkedCount = filtered.filter(row=>row.eventId).length;
+  return <PageShell>
+    <PageHeader title="Quotations" subtitle={`${filtered.length} shown · quotations use the same operational layout as purchases`} action={<PrimaryButton onClick={()=>{setEditingQuote(null);setShowQuoteModal(true);}}>✨ New Quote</PrimaryButton>}/>
+    <SummaryGrid>
+      <SummaryCard label="Total Quoted" value={fc(totalQuoted,sym)} tone="text-blue-700"/>
+      <SummaryCard label="Pending" value={filtered.filter(row=>row.status==="Pending").length} tone="text-amber-700"/>
+      <SummaryCard label="Approved" value={filtered.filter(row=>row.status==="Approved").length} tone="text-emerald-700"/>
+      <SummaryCard label="Linked Events" value={linkedCount} tone="text-red-700"/>
+    </SummaryGrid>
+    <FilterBar columns="md:grid-cols-5">
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search quotes, client, event, item" className={inp}/>
+      <select aria-label="Quote status filter" value={status} onChange={e=>setStatus(e.target.value)} className={inp}><option value="all">All Status</option>{["Pending","Approved","Rejected","Cancelled"].map(s=><option key={s}>{s}</option>)}</select>
+      <select aria-label="Quote event filter" value={eventFilter} onChange={e=>setEventFilter(e.target.value)} className={inp}><option value="all">All Events</option>{events.map(e=><option key={e.id} value={e.id}>{e.title}</option>)}</select>
+      <select aria-label="Quote date sort" value={sort} onChange={e=>setSort(e.target.value)} className={inp}><option value="newest">Newest date</option><option value="oldest">Oldest date</option></select>
+      <ActionButton onClick={()=>{setQ("");setStatus("all");setEventFilter("all");setSort("newest");}}>Reset Filters</ActionButton>
+    </FilterBar>
+    <div className="space-y-3">{filtered.map(row=>{
+      const ev = events.find(e=>e.id===Number(row.eventId));
+      const locked = isEventLocked(ev);
+      return <RecordCard key={row.id}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr_auto] gap-3">
+          <div className="min-w-0">
+            <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Quote No.</p>
+            <div className="flex flex-wrap items-center gap-2"><p className="font-black text-gray-800">{row.number}</p><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(row.status)}`}>{row.status}</span>{locked&&<span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-bold">Locked event</span>}</div>
+            <p className="text-sm text-gray-600 font-semibold mt-1">{row.client || "No client"}</p>
+            <p className="text-xs text-gray-400">{row.eventTitle || ev?.title || "No event"} · Generated {fd(row.generatedDate||row.date)}{row.eventDate?` · Event ${fd(row.eventDate)}`:""}</p>
+            {row.description&&<p className="text-sm text-gray-600 mt-1">{row.description}</p>}
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Items</p>
+            <p className="text-sm text-gray-700">{(row.items||[]).map(it=>it.desc||it.item).filter(Boolean).join(", ") || "No line items"}</p>
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2">{(row.items||[]).slice(0,4).map((it,i)=><div key={i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs"><b>{it.desc||it.item}</b>{(it.note||it.description)&&<p className="text-gray-500 mt-0.5">{it.note||it.description}</p>}</div>)}</div>
+          </div>
+          <div className="lg:text-right"><p className="text-gray-400 text-xs">Total</p><b className="text-lg text-gray-800">{fc(row.total,sym)}</b></div>
+        </div>
+        <div className="flex flex-wrap gap-2 mt-3">
+          <ActionButton tone="indigo" onClick={()=>setPrintQuote(row)}>Print</ActionButton>
+          {!locked&&<ActionButton tone="red" onClick={()=>{setEditingQuote(row);setShowQuoteModal(true);}}>Edit</ActionButton>}
+          {!locked&&<ActionButton onClick={()=>setQuotes(quotes.filter(x=>x.id!==row.id))}>Delete</ActionButton>}
+          {!locked&&<ActionButton tone="blue" onClick={()=>{setInvoices(p=>{ const date=ymd(); return [...p,{id:Date.now(),number:docNo("invoice",date,p),client:row.client,eventId:row.eventId,eventTitle:row.eventTitle||"",date,due:"",total:row.total,paid:0,status:"Unpaid",attachments:row.attachments||[],items:(row.items||[]).map((it,i)=>({id:it.id||i,desc:it.desc||it.item,note:it.note||it.description||"",qty:it.qty||1,price:it.price??it.unitPrice??0}))}]; });setQuotes(p=>p.map(x=>x.id===row.id?{...x,status:"Approved"}:x));if(row.eventId) setEvents(p=>p.map(ev=>ev.id===row.eventId?{...ev,status:"Approved"}:ev));setTab("invoices");}}>Convert to Invoice</ActionButton>}
+          {!locked&&<ActionButton tone="emerald" onClick={()=>{setPendingPO({eventId:row.eventId||"", items:(row.items||[]).map((it,i)=>({id:Date.now()+i,item:it.desc||it.item,description:it.note||it.description||"",category:"Materials",qty:it.qty,unitPrice:it.price??it.unitPrice})), notes:`From quotation ${row.number}`}); setTab("purchases");}}>Create PO</ActionButton>}
+        </div>
+      </RecordCard>;
+    })}</div>
+    {!filtered.length&&<EmptyState>No quotations found.</EmptyState>}
+  </PageShell>;
+}
+
+function InvoicesTab({invoices, setInvoices, events, auditLog, expandedInvoice, setExpandedInvoice, setEditingInvoice, setShowInvoiceModal, setPrintInvoice, setPayInvoice, addAudit, invoicePaid, sym}) {
+  const [q,setQ] = useState("");
+  const [status,setStatus] = useState("all");
+  const [eventFilter,setEventFilter] = useState("all");
+  const [sort,setSort] = useState("newest");
+  const filtered = [...invoices].filter(inv => {
+    const ev = events.find(e=>e.id===Number(inv.eventId));
+    const hay = [inv.number,inv.client,inv.status,inv.eventTitle,ev?.title,...(inv.items||[]).flatMap(it=>[it.desc,it.item,it.note,it.description])].join(" ").toLowerCase();
+    return (!q || hay.includes(q.toLowerCase())) && (status==="all" || inv.status===status) && (eventFilter==="all" || Number(inv.eventId)===Number(eventFilter));
+  }).sort((a,b)=>{
+    if(sort==="due") return new Date(a.due||a.date||0)-new Date(b.due||b.date||0);
+    if(sort==="balance") return (Number(b.total||0)-invoicePaid(b))-(Number(a.total||0)-invoicePaid(a));
+    return new Date(b.date||0)-new Date(a.date||0);
+  });
+  const invoiced = filtered.reduce((s,inv)=>s+Number(inv.total||0),0);
+  const paidTotal = filtered.reduce((s,inv)=>s+invoicePaid(inv),0);
+  const balanceTotal = filtered.reduce((s,inv)=>s+Math.max(0,Number(inv.total||0)-invoicePaid(inv)),0);
+  return <PageShell>
+    <PageHeader title="Invoices" subtitle={`${filtered.length} shown · expandable receivable cards`} action={<PrimaryButton onClick={()=>{setEditingInvoice(null);setShowInvoiceModal(true);}}>+ New Invoice</PrimaryButton>}/>
+    <SummaryGrid>
+      <SummaryCard label="Invoiced" value={fc(invoiced,sym)} tone="text-blue-700"/>
+      <SummaryCard label="Paid" value={fc(paidTotal,sym)} tone="text-emerald-700"/>
+      <SummaryCard label="Outstanding" value={fc(balanceTotal,sym)} tone="text-red-700"/>
+      <SummaryCard label="Unpaid / Partial" value={filtered.filter(inv=>["Unpaid","Partial"].includes(inv.status)).length} tone="text-amber-700"/>
+    </SummaryGrid>
+    <FilterBar columns="md:grid-cols-5">
+      <input value={q} onChange={e=>setQ(e.target.value)} placeholder="Search invoices, client, event, item" className={inp}/>
+      <select aria-label="Invoice status filter" value={status} onChange={e=>setStatus(e.target.value)} className={inp}><option value="all">All Status</option>{["Unpaid","Partial","Paid","Cancelled"].map(s=><option key={s}>{s}</option>)}</select>
+      <select aria-label="Invoice event filter" value={eventFilter} onChange={e=>setEventFilter(e.target.value)} className={inp}><option value="all">All Events</option>{events.map(e=><option key={e.id} value={e.id}>{e.title}</option>)}</select>
+      <select aria-label="Invoice sort" value={sort} onChange={e=>setSort(e.target.value)} className={inp}><option value="newest">Newest issue date</option><option value="due">Due date</option><option value="balance">Highest balance</option></select>
+      <ActionButton onClick={()=>{setQ("");setStatus("all");setEventFilter("all");setSort("newest");}}>Reset Filters</ActionButton>
+    </FilterBar>
+    <div className="space-y-3">{filtered.map(inv=>{
+      const paid=invoicePaid(inv);
+      const balance=Math.max(0,Number(inv.total||0)-paid);
+      const pct=inv.total>0?Math.min(100,(paid/Number(inv.total||0))*100):0;
+      const open=expandedInvoice===inv.id;
+      const invEvent=events.find(e=>e.id===Number(inv.eventId));
+      const invLocked=isEventLocked(invEvent);
+      return <RecordCard key={inv.id} onClick={()=>setExpandedInvoice(open?null:inv.id)} role="button" aria-label={`Open invoice details ${inv.number}`} tabIndex={0} onKeyDown={e=>toggleCardKey(e,()=>setExpandedInvoice(open?null:inv.id))} className="cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-200">
+        <div className="grid grid-cols-1 lg:grid-cols-[1.15fr_1fr_auto] gap-3">
+          <div className="min-w-0"><p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Invoice No.</p><div className="flex flex-wrap items-center gap-2"><p className="font-black text-gray-800">{inv.number}</p><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(inv.status)}`}>{inv.status}</span>{invLocked&&<span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-bold">Locked event</span>}</div><p className="font-semibold text-gray-700 mt-1">{inv.client}{(inv.eventTitle||invEvent?.title)?` - ${inv.eventTitle||invEvent?.title}`:""}</p><p className="text-sm text-gray-500">Issued: {fd(inv.date)}{inv.due?` · Due: ${fd(inv.due)}`:""}</p></div>
+          <div><p className="text-[10px] uppercase tracking-wider text-gray-400 font-bold">Progress</p><div className="flex justify-between text-xs text-gray-500 mb-1"><span>Paid: {fc(paid,sym)}</span><span>Balance: {fc(balance,sym)}</span></div><div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-400 rounded-full" style={{width:`${pct}%`}}/></div>{(inv.payments||[]).length>0&&<p className="mt-2 text-[11px] text-gray-500">{(inv.payments||[]).map(x=>`${x.label}: ${fc(x.amount,sym)}`).join(" · ")}</p>}</div>
+          <div className="lg:text-right"><p className="text-gray-400 text-xs">Total</p><b className="text-lg text-gray-800">{fc(inv.total,sym)}</b></div>
+        </div>
+        {(inv.items||[]).length>0&&<div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">{(inv.items||[]).slice(0,4).map((it,i)=><div key={i} className="bg-gray-50 rounded-lg px-3 py-2 text-xs"><b>{it.desc||it.item}</b>{(it.note||it.description)&&<p className="text-gray-500 mt-0.5">{it.note||it.description}</p>}</div>)}</div>}
+        <div className="flex flex-wrap gap-2 mt-3" onClick={e=>e.stopPropagation()}>
+          <ActionButton tone="blue" onClick={()=>setExpandedInvoice(open?null:inv.id)}>{open?"Hide Details":"Details"}</ActionButton>
+          <ActionButton tone="indigo" onClick={()=>setPrintInvoice(inv)}>Print</ActionButton>
+          {!invLocked&&<ActionButton tone="red" onClick={()=>{setEditingInvoice(inv);setShowInvoiceModal(true);}}>Edit</ActionButton>}
+          {!invLocked&&<ActionButton tone="emerald" onClick={()=>setPayInvoice(inv)}>Add Payment</ActionButton>}
+          {!invLocked&&<ActionButton onClick={()=>{setInvoices(invoices.filter(x=>x.id!==inv.id)); addAudit("invoice.delete", "invoice", inv.number, "deleted");}}>Delete</ActionButton>}
+        </div>
+        {open&&<div onClick={e=>e.stopPropagation()} className="mt-4 border-t border-gray-100 pt-4 grid grid-cols-1 lg:grid-cols-2 gap-4"><div><p className="text-xs font-bold text-gray-500 uppercase mb-2">Invoice Items</p>{(inv.items||[]).length?(inv.items||[]).map((it,i)=><div key={i} className="bg-gray-50 rounded-xl p-3 text-sm mb-2"><div className="flex justify-between gap-2"><b>{it.desc||it.item}</b><span>{it.qty} x {fc(it.price??it.unitPrice,sym)}</span></div>{(it.note||it.description)&&<p className="text-xs text-gray-500 mt-1">{it.note||it.description}</p>}</div>):<p className="text-sm text-gray-400">No line items. Total entered manually.</p>}</div><div><p className="text-xs font-bold text-gray-500 uppercase mb-2">Payment Ledger</p>{(inv.payments||[]).length?(inv.payments||[]).map(x=><div key={x.id} className="bg-gray-50 rounded-xl p-3 text-sm mb-2 flex justify-between"><span>{x.label} · {fd(x.date)}</span><b>{fc(x.amount,sym)}</b></div>):<p className="text-sm text-gray-400">No payments yet.</p>}</div></div>}
+      </RecordCard>;
+    })}</div>
+    {!filtered.length&&<EmptyState>No invoices found.</EmptyState>}
+    <div className="mt-6"><AuditLogPanel auditLog={auditLog}/></div>
+  </PageShell>;
+}
+
+function ClientsTab({clients, setClients, events, quotes, invoices, setEditClient, addAudit, sym}) {
+  const [search,setSearch] = useState("");
+  const [typeFilter,setTypeFilter] = useState("all");
+  const [sort,setSort] = useState("name");
+  const rows = [...clients].filter(c => {
+    const hay = [c.name,c.email,c.phone,c.type,c.address].join(" ").toLowerCase();
+    return (!search || hay.includes(search.toLowerCase())) && (typeFilter==="all" || c.type===typeFilter);
+  }).sort((a,b)=>{
+    const ae=events.filter(e=>e.client===a.name), be=events.filter(e=>e.client===b.name);
+    if(sort==="events") return be.length-ae.length;
+    if(sort==="repeat") return Math.max(0,be.length-1)-Math.max(0,ae.length-1);
+    if(sort==="latest") return String(be.map(e=>e.date).sort().pop()||"").localeCompare(String(ae.map(e=>e.date).sort().pop()||""));
+    return String(a.name).localeCompare(String(b.name));
+  });
+  const totalQuoted = rows.reduce((s,c)=>s+quotes.filter(q=>q.client===c.name).reduce((a,q)=>a+Number(q.total||0),0),0);
+  const totalInvoiced = rows.reduce((s,c)=>s+invoices.filter(i=>i.client===c.name).reduce((a,i)=>a+Number(i.total||0),0),0);
+  const repeatClients = rows.filter(c=>events.filter(e=>e.client===c.name).length>1).length;
+  return <PageShell>
+    <PageHeader title="Clients" subtitle={`${rows.length} shown · client relationship cards`} action={<PrimaryButton onClick={()=>setEditClient({})}>+ Add Client</PrimaryButton>}/>
+    <SummaryGrid>
+      <SummaryCard label="Clients" value={rows.length} tone="text-red-700"/>
+      <SummaryCard label="Repeat Clients" value={repeatClients} tone="text-emerald-700"/>
+      <SummaryCard label="Quoted Value" value={fc(totalQuoted,sym)} tone="text-blue-700"/>
+      <SummaryCard label="Invoiced Value" value={fc(totalInvoiced,sym)} tone="text-amber-700"/>
+    </SummaryGrid>
+    <FilterBar columns="md:grid-cols-4">
+      <input placeholder="Search clients" value={search} onChange={e=>setSearch(e.target.value)} className={inp}/>
+      <select aria-label="Client type filter" value={typeFilter} onChange={e=>setTypeFilter(e.target.value)} className={inp}><option value="all">All Types</option>{EVENT_TYPES.map(t=><option key={t}>{t}</option>)}</select>
+      <select aria-label="Client sort" value={sort} onChange={e=>setSort(e.target.value)} className={inp}><option value="name">Sort: Name</option><option value="events">Sort: Events</option><option value="repeat">Sort: Repeat</option><option value="latest">Sort: Latest Event</option></select>
+      <ActionButton onClick={()=>{setSearch("");setTypeFilter("all");setSort("name");}}>Reset Filters</ActionButton>
+    </FilterBar>
+    <div className="space-y-3">{rows.map(c=>{
+      const clientEvents=events.filter(e=>e.client===c.name);
+      const clientQuotes=quotes.filter(q=>q.client===c.name);
+      const clientInvoices=invoices.filter(i=>i.client===c.name);
+      const repeatOrders=Math.max(0,clientEvents.length-1);
+      const lastEvent=clientEvents.map(e=>e.date).filter(Boolean).sort().pop();
+      const quoted=clientQuotes.reduce((s,q)=>s+Number(q.total||0),0);
+      const invoiced=clientInvoices.reduce((s,i)=>s+Number(i.total||0),0);
+      return <RecordCard key={c.id}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3">
+          <div className="flex items-center gap-3 min-w-0"><Avatar name={c.name} size="sm" color="from-red-500 to-red-700"/><div className="min-w-0"><p className="font-bold text-gray-800 truncate">{c.name}</p><p className="text-xs text-gray-500 truncate">{c.address||"No address"}</p><p className="text-xs text-gray-400 truncate">{c.phone||c.email||"No contact"}{c.phone&&c.email?` · ${c.email}`:""}</p></div></div>
+          <div className="grid grid-cols-3 gap-2 text-xs"><p>EVENTS<br/><b>{clientEvents.length}</b></p><p>QUOTES<br/><b>{clientQuotes.length}</b></p><p>INVOICES<br/><b>{clientInvoices.length}</b></p></div>
+          <div className="lg:text-right"><span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">{c.type}</span><p className="text-xs text-gray-500 mt-2">Repeat {repeatOrders}{lastEvent?` · Last ${fd(lastEvent)}`:""}</p></div>
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3 text-xs bg-gray-50 rounded-xl p-3"><p>Quoted<br/><b>{fc(quoted,sym)}</b></p><p>Invoiced<br/><b>{fc(invoiced,sym)}</b></p><p>Open Events<br/><b>{clientEvents.filter(e=>!isEventLocked(e)&&e.status!=="Cancelled").length}</b></p><p>Latest<br/><b>{lastEvent?fd(lastEvent):"—"}</b></p></div>
+        <div className="flex flex-wrap gap-2 mt-3"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">ACTIONS</span><ActionButton tone="red" onClick={()=>setEditClient(c)}>Edit</ActionButton><ActionButton onClick={()=>{setClients(clients.filter(x=>x.id!==c.id)); addAudit("client.remove", "client", c.name, "removed");}}>Remove</ActionButton></div>
+      </RecordCard>;
+    })}</div>
+    {!rows.length&&<EmptyState>No results</EmptyState>}
+  </PageShell>;
+}
+
+function VendorsTab({vendors, setVendors, purchases, setEditVendor, addAudit, sym}) {
+  const [search,setSearch] = useState("");
+  const [category,setCategory] = useState("all");
+  const [status,setStatus] = useState("all");
+  const [sort,setSort] = useState("name");
+  const rows = [...vendors].filter(v => {
+    const hay = [v.name,v.email,v.phone,v.category,v.status,v.address].join(" ").toLowerCase();
+    return (!search || hay.includes(search.toLowerCase())) && (category==="all" || v.category===category) && (status==="all" || v.status===status);
+  }).sort((a,b)=>{
+    if(sort==="rate") return Number(b.rate||0)-Number(a.rate||0);
+    if(sort==="category") return String(a.category||"").localeCompare(String(b.category||""));
+    if(sort==="status") return String(a.status||"").localeCompare(String(b.status||""));
+    if(sort==="spend") return vendorSpend(b.name)-vendorSpend(a.name);
+    return String(a.name||"").localeCompare(String(b.name||""));
+  });
+  function vendorSpend(name) { return purchases.filter(p=>p.vendor===name).reduce((s,p)=>s+purchaseTotal(p),0); }
+  const totalSpend = rows.reduce((s,v)=>s+vendorSpend(v.name),0);
+  const activeCount = rows.filter(v=>v.status==="Active").length;
+  const categoriesUsed = new Set(rows.map(v=>v.category).filter(Boolean)).size;
+  const avgRate = rows.length ? rows.reduce((s,v)=>s+Number(v.rate||0),0)/rows.length : 0;
+  return <PageShell>
+    <PageHeader title="Vendors & Suppliers" subtitle={`${rows.length} shown · vendor spend and supplier cards`} action={<PrimaryButton onClick={()=>setEditVendor({})}>+ Add Vendor</PrimaryButton>}/>
+    <SummaryGrid>
+      <SummaryCard label="Vendors" value={rows.length} tone="text-indigo-700"/>
+      <SummaryCard label="Active" value={activeCount} tone="text-emerald-700"/>
+      <SummaryCard label="Vendor Spend" value={fc(totalSpend,sym)} tone="text-red-700"/>
+      <SummaryCard label="Avg Base Rate" value={fc(avgRate,sym)} tone="text-blue-700"><p className="text-xs text-gray-400">{categoriesUsed} categories</p></SummaryCard>
+    </SummaryGrid>
+    <FilterBar columns="md:grid-cols-5">
+      <input placeholder="Search vendors" value={search} onChange={e=>setSearch(e.target.value)} className={inp}/>
+      <select aria-label="Vendor category filter" value={category} onChange={e=>setCategory(e.target.value)} className={inp}><option value="all">All Categories</option>{VENDOR_CATS.map(c=><option key={c}>{c}</option>)}</select>
+      <select aria-label="Vendor status filter" value={status} onChange={e=>setStatus(e.target.value)} className={inp}><option value="all">All Status</option><option>Active</option><option>Inactive</option></select>
+      <select aria-label="Vendor sort" value={sort} onChange={e=>setSort(e.target.value)} className={inp}><option value="name">Sort: Name</option><option value="spend">Sort: Spend</option><option value="category">Sort: Category</option><option value="rate">Sort: Rate</option><option value="status">Sort: Status</option></select>
+      <ActionButton onClick={()=>{setSearch("");setCategory("all");setStatus("all");setSort("name");}}>Reset Filters</ActionButton>
+    </FilterBar>
+    <div className="space-y-3">{rows.map(v=>{
+      const spend = vendorSpend(v.name);
+      const poCount = purchases.filter(p=>p.vendor===v.name).length;
+      return <RecordCard key={v.id}>
+        <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3">
+          <div className="flex items-center gap-3 min-w-0"><Avatar name={v.name} size="sm" color="from-indigo-500 to-violet-600"/><div className="min-w-0"><p className="font-bold text-gray-800 truncate">{v.name}</p><p className="text-xs text-gray-500 truncate">{v.address||"No address"}</p><p className="text-xs text-gray-400 truncate">{v.phone||v.email||"No contact"}{v.phone&&v.email?` · ${v.email}`:""}</p></div></div>
+          <div><span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">{v.category}</span><p className="text-sm text-gray-500 mt-2">Base Rate <b>{fc(v.rate,sym)}</b></p></div>
+          <div className="lg:text-right"><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(v.status)}`}>{v.status}</span><p className="text-xs text-gray-500 mt-2">{poCount} PO · {fc(spend,sym)}</p></div>
+        </div>
+        <div className="flex flex-wrap gap-2 mt-3"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">ACTIONS</span><ActionButton tone="red" onClick={()=>setEditVendor(v)}>Edit</ActionButton><ActionButton onClick={()=>{setVendors(vendors.filter(x=>x.id!==v.id)); addAudit("vendor.remove", "vendor", v.name, "removed");}}>Remove</ActionButton></div>
+      </RecordCard>;
+    })}</div>
+    {!rows.length&&<EmptyState>No results</EmptyState>}
+  </PageShell>;
+}
+
 // ─── SETTINGS TAB ─────────────────────────────────────────────────────────────
 
 // ─── AUDIT LOG ────────────────────────────────────────────────────────────────
@@ -533,7 +765,7 @@ function WorkersTab({workers, setWorkers, events, eventWorkers, workerPayments=[
       {editWorker!==null&&<WorkerModal worker={editWorker} onSave={w=>{setWorkers(w.id&&workers.find(x=>x.id===w.id)?workers.map(x=>x.id===w.id?w:x):[...workers,w]);setEditWorker(null);}} onClose={()=>setEditWorker(null)}/>}      
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6"><div><h1 className="text-2xl font-bold text-gray-800">Workers</h1><p className="text-gray-500 text-sm mt-0.5">{workers.length} workers · compact payable cards</p></div><div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2"><input placeholder="Search workers" value={search} onChange={e=>setSearch(e.target.value)} className={inp}/><select aria-label="Worker sort" value={sort} onChange={e=>setSort(e.target.value)} className={inp}><option value="name">Sort: Name</option><option value="pending">Sort: Pending</option><option value="paid">Sort: Paid</option><option value="assignments">Sort: Assignments</option></select><button onClick={()=>setEditWorker({})} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-red-700">+ Add Worker</button></div></div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"><div className="bg-white rounded-2xl border border-gray-100 p-4"><p className="text-xs font-semibold text-gray-500 uppercase">Total Worker Fee</p><p className="text-2xl font-bold text-orange-600">{fc(totalWorkerPayroll,sym)}</p></div><div className="bg-white rounded-2xl border border-gray-100 p-4"><p className="text-xs font-semibold text-gray-500 uppercase">PAID</p><p className="text-2xl font-bold text-emerald-600">{fc(totalPaidWorkers,sym)}</p></div><div className="bg-white rounded-2xl border border-gray-100 p-4"><p className="text-xs font-semibold text-gray-500 uppercase">PENDING</p><p className="text-2xl font-bold text-red-600">{fc(totalPendingWorkers,sym)}</p></div></div>
-      <div className="space-y-3 mb-6"><h2 className="font-bold text-gray-700">Worker Payables</h2>{visibleWorkers.map(w=>{const total=workerTotal(w.id), paid=workerPaid(w.id), due=workerDue(w.id), asgn=workerRows(w.id); return <div key={w.id} className="bg-white rounded-2xl border border-gray-100 p-4"><div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3"><div className="flex items-center gap-3"><Avatar name={w.name} size="sm" color="from-orange-400 to-red-500"/><div><p className="font-bold text-gray-800">{w.name}</p><p className="text-xs text-gray-500">{w.jobDesc}</p><p className="text-xs text-gray-400">{w.phone||w.email||"—"}</p></div></div><div><p className="text-xs text-gray-500">{asgn.length} event{asgn.length!==1?"s":""}</p><div className="text-[11px] text-gray-500 break-words">{latestPaymentText(w.id)}</div></div><div className="grid grid-cols-3 gap-2 text-xs lg:text-right"><p>STANDARD<br/><b>{fc(w.fee,sym)}</b></p><p>PAID<br/><b className="text-emerald-600">{fc(paid,sym)}</b></p><p>PENDING<br/><b className="text-red-600">{fc(due,sym)}</b></p></div></div><div className="flex flex-wrap gap-2 mt-3"><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(w.status)}`}>{w.status}</span><button onClick={()=>{setPayWorker(w);setWorkerPayAmount(workerPayableDue(w.id));}} disabled={workerPayableDue(w.id)<=0} className="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50">Pay Worker</button><button onClick={()=>setViewWorker(viewWorker===w.id?null:w.id)} className="bg-blue-50 text-blue-700 px-3 py-2 rounded-xl text-sm font-bold">Details</button><button onClick={()=>setEditWorker(w)} className="bg-red-50 text-red-700 px-3 py-2 rounded-xl text-sm font-bold">Edit</button><button onClick={()=>setWorkers(workers.filter(x=>x.id!==w.id))} className="bg-gray-100 text-gray-500 px-3 py-2 rounded-xl text-sm font-bold">Remove</button></div></div>})}{visibleWorkers.length===0&&<p className="text-sm text-gray-400 bg-white rounded-2xl p-4 border border-gray-100">No results</p>}</div>
+      <div className="space-y-3 mb-6"><h2 className="font-bold text-gray-700">Worker Payables</h2>{visibleWorkers.map(w=>{const total=workerTotal(w.id), paid=workerPaid(w.id), due=workerDue(w.id), asgn=workerRows(w.id); return <div key={w.id} onClick={()=>setViewWorker(viewWorker===w.id?null:w.id)} role="button" aria-label={`Open worker details ${w.name}`} tabIndex={0} onKeyDown={e=>toggleCardKey(e,()=>setViewWorker(viewWorker===w.id?null:w.id))} className="bg-white rounded-2xl border border-gray-100 p-4 cursor-pointer hover:shadow-sm transition focus:outline-none focus:ring-2 focus:ring-red-200"><div className="grid grid-cols-1 lg:grid-cols-[1.3fr_1fr_auto] gap-3"><div className="flex items-center gap-3"><Avatar name={w.name} size="sm" color="from-orange-400 to-red-500"/><div><p className="font-bold text-gray-800">{w.name}</p><p className="text-xs text-gray-500">{w.jobDesc}</p><p className="text-xs text-gray-400">{w.phone||w.email||"—"}</p></div></div><div><p className="text-xs text-gray-500">{asgn.length} event{asgn.length!==1?"s":""}</p><div className="text-[11px] text-gray-500 break-words">{latestPaymentText(w.id)}</div></div><div className="grid grid-cols-3 gap-2 text-xs lg:text-right"><p>STANDARD<br/><b>{fc(w.fee,sym)}</b></p><p>PAID<br/><b className="text-emerald-600">{fc(paid,sym)}</b></p><p>PENDING<br/><b className="text-red-600">{fc(due,sym)}</b></p></div></div><div className="flex flex-wrap gap-2 mt-3" onClick={e=>e.stopPropagation()}><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(w.status)}`}>{w.status}</span><button onClick={()=>{setPayWorker(w);setWorkerPayAmount(workerPayableDue(w.id));}} disabled={workerPayableDue(w.id)<=0} className="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50">Pay Worker</button><button onClick={()=>setViewWorker(viewWorker===w.id?null:w.id)} className="bg-blue-50 text-blue-700 px-3 py-2 rounded-xl text-sm font-bold">Details</button><button onClick={()=>setEditWorker(w)} className="bg-red-50 text-red-700 px-3 py-2 rounded-xl text-sm font-bold">Edit</button><button onClick={()=>setWorkers(workers.filter(x=>x.id!==w.id))} className="bg-gray-100 text-gray-500 px-3 py-2 rounded-xl text-sm font-bold">Remove</button></div></div>})}{visibleWorkers.length===0&&<p className="text-sm text-gray-400 bg-white rounded-2xl p-4 border border-gray-100">No results</p>}</div>
       {sel&&<div className="bg-white rounded-2xl border border-gray-100 p-5"><div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4"><div><h3 className="font-bold text-gray-800">{sel.name} — Payment & Income Details</h3><p className="text-sm text-gray-500">Paid {fc(workerPaid(sel.id),sym)} · Pending {fc(workerDue(sel.id),sym)}</p></div><button onClick={()=>{setPayWorker(sel);setWorkerPayAmount(workerPayableDue(sel.id));}} disabled={workerPayableDue(sel.id)<=0} className="bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl text-sm font-bold disabled:opacity-50">Pay Worker</button></div><div className="grid grid-cols-1 xl:grid-cols-2 gap-6"><div><h4 className="text-sm font-bold text-gray-600 mb-3">Income by Event</h4>{selAssignments.length===0?<p className="text-sm text-gray-400 italic">No assignments yet.</p>:<div className="space-y-2">{selAssignments.map(ew=><div key={ew.id} className="flex items-center justify-between bg-orange-50 rounded-xl px-4 py-3"><div><p className="text-sm font-semibold text-gray-800">{ew.event?.title}</p><p className="text-xs text-gray-500">{ew.jobDesc} · {fd(ew.event?.date)}</p></div><span className="font-bold text-orange-700">{fc(ew.fee,sym)}</span></div>)}</div>}</div><div><h4 className="text-sm font-bold text-gray-600 mb-3">Payment Ledger</h4>{workerPayments.filter(p=>p.workerId===sel.id).length===0?<p className="text-sm text-gray-400 italic">No payments yet.</p>:<div className="space-y-2">{workerPayments.filter(p=>p.workerId===sel.id).map(p=><div key={p.id} className="flex justify-between bg-gray-50 rounded-xl px-4 py-2 text-sm"><span>{p.label} · {fd(p.date)}</span><b>{fc(p.amount,sym)}</b></div>)}</div>}</div></div></div>}
     </div>
   );
@@ -574,19 +806,37 @@ function EventsTab({events, setEvents, clients, workers, eventWorkers, setEventW
     return (!eventSearch || hay.includes(eventSearch.toLowerCase())) && (statusFilter==="all" || ev.status===statusFilter) && (!dateFrom || String(ev.date||"")>=dateFrom) && (!dateTo || String(ev.date||"")<=dateTo);
   }).sort((a,b)=>dateSort==="asc"?new Date(a.date||0)-new Date(b.date||0):new Date(b.date||0)-new Date(a.date||0));
   const nextEvents = cardEvents.filter(e=>new Date(e.date||0)>=new Date(new Date().toDateString())).slice(0,8);
-  return <div className="p-4 md:p-8 overflow-x-hidden">
+  const totalQuotes = cardEvents.reduce((s,e)=>s+linked(e.id).quotes.length,0);
+  const totalPO = cardEvents.reduce((s,e)=>s+linked(e.id).purchases.length,0);
+  const totalWorkers = cardEvents.reduce((s,e)=>s+linked(e.id).workers.length,0);
+  const lockedCount = cardEvents.filter(e=>isEventLocked(e)).length;
+  const blockerTotal = cardEvents.reduce((s,e)=>s+closeBlockers(e.id).total,0);
+  return <PageShell>
     {cancelEvent&&<Modal title="Cancel Event" onClose={()=>{setCancelEvent(null);setCancelReason("");}} maxW="max-w-lg"><div className="space-y-4"><div className="bg-red-50 border border-red-100 rounded-xl p-4"><p className="font-bold text-red-700">{cancelEvent.title}</p><p className="text-sm text-red-600 mt-1">Cancellation keeps quotations, invoices, purchases, and worker fees for audit and finance reports.</p></div><textarea rows={4} value={cancelReason} onChange={e=>setCancelReason(e.target.value)} placeholder="Reason for cancellation" className={inp+" resize-none"}/><div className="flex gap-3"><button onClick={()=>{setCancelEvent(null);setCancelReason("");}} className="flex-1 border border-gray-200 text-gray-600 py-2.5 rounded-xl font-medium text-sm hover:bg-gray-50">Close</button><button onClick={confirmCancel} disabled={!cancelReason.trim()} className="flex-1 bg-red-600 text-white py-2.5 rounded-xl font-semibold text-sm hover:bg-red-700 disabled:opacity-50">Confirm Cancel</button></div></div></Modal>}
-    <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6"><div><h1 className="text-2xl font-bold text-gray-800">Events</h1><p className="text-gray-500 text-sm mt-0.5">{cardEvents.length} shown · no schedule table, cards expand into quotation/PO/worker detail</p></div></div>
-    <div className="grid grid-cols-1 md:grid-cols-5 gap-3 mb-5"><input value={eventSearch} onChange={e=>setEventSearch(e.target.value)} placeholder="Search events" className={inp}/><select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className={inp} aria-label="Event status filter"><option value="all">All Status</option>{["Planning","Confirmed","Approved","Done","Cancelled"].map(s=><option key={s}>{s}</option>)}</select><input aria-label="From Date" type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} className={inp}/><input aria-label="To Date" type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} className={inp}/><select aria-label="Sort by Date" value={dateSort} onChange={e=>setDateSort(e.target.value)} className={inp}><option value="asc">Sort by Date ↑</option><option value="desc">Sort by Date ↓</option></select></div>
-    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden mb-4">
+    <PageHeader title="Events" subtitle={`${cardEvents.length} shown · cards expand into quotation, PO, and worker detail`}/>
+    <SummaryGrid>
+      <SummaryCard label="Events" value={cardEvents.length} tone="text-red-700"/>
+      <SummaryCard label="Upcoming" value={nextEvents.length} tone="text-blue-700"/>
+      <SummaryCard label="Locked / Done" value={lockedCount} tone="text-indigo-700"/>
+      <SummaryCard label="Unpaid Blockers" value={fc(blockerTotal,sym)} tone={blockerTotal>0?"text-red-700":"text-emerald-700"}/>
+    </SummaryGrid>
+    <FilterBar columns="md:grid-cols-6">
+      <input value={eventSearch} onChange={e=>setEventSearch(e.target.value)} placeholder="Search events" className={inp}/>
+      <select value={statusFilter} onChange={e=>setStatusFilter(e.target.value)} className={inp} aria-label="Event status filter"><option value="all">All Status</option>{["Planning","Confirmed","Approved","Done","Cancelled"].map(s=><option key={s}>{s}</option>)}</select>
+      <input aria-label="From Date" type="date" value={dateFrom} onChange={e=>setDateFrom(e.target.value)} className={inp}/>
+      <input aria-label="To Date" type="date" value={dateTo} onChange={e=>setDateTo(e.target.value)} className={inp}/>
+      <select aria-label="Sort by Date" value={dateSort} onChange={e=>setDateSort(e.target.value)} className={inp}><option value="asc">Sort by Date ↑</option><option value="desc">Sort by Date ↓</option></select>
+      <ActionButton onClick={()=>{setEventSearch("");setStatusFilter("all");setDateFrom("");setDateTo("");setDateSort("asc");}}>Reset Filters</ActionButton>
+    </FilterBar>
+    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden mb-4">
       <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-2">
         <h2 className="font-bold text-gray-800">Event Filters Summary</h2>
-        <div className="flex flex-wrap gap-2 text-xs text-gray-600"><span>{cardEvents.length} events</span><span>{cardEvents.reduce((s,e)=>s+linked(e.id).quotes.length,0)} quotes</span><span>{cardEvents.reduce((s,e)=>s+linked(e.id).purchases.length,0)} PO</span><span>{cardEvents.reduce((s,e)=>s+linked(e.id).workers.length,0)} workers</span></div>
+        <div className="flex flex-wrap gap-2 text-xs text-gray-600"><span>{cardEvents.length} events</span><span>{totalQuotes} quotes</span><span>{totalPO} PO</span><span>{totalWorkers} workers</span></div>
       </div>
     </div>
-    <div className="space-y-4">{cardEvents.map(ev=>{ const l=linked(ev.id), ew=l.workers, ep=l.purchases, eq=l.quotes; const isOpen=expanded===ev.id; const quoteTotal=eq.reduce((s,q)=>s+Number(q.total||0),0); const blocked=closeBlockers(ev.id); const selectedQuote=eq.find(q=>q.id===poQuoteByEvent[ev.id])||eq[0]; const locked=isEventLocked(ev); return <div key={ev.id} className="bg-white rounded-2xl border border-gray-100 hover:shadow-sm transition overflow-hidden"><div className="p-4 md:p-5 flex flex-col md:flex-row md:items-center gap-4"><div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center text-2xl flex-shrink-0">{typeIcon(ev.type)}</div><div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2 mb-0.5"><h3 className="font-bold text-gray-800">{ev.title}</h3><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${sc(ev.status)}`}>{ev.status}</span>{locked&&<span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">Locked</span>}</div><p className="text-sm text-gray-500">{ev.client||"No client"}{ev.venue?` · ${ev.venue}`:""}</p><p className="text-xs text-gray-400 mt-0.5">{fd(ev.date)} · 📋 {eq.length} quotation{eq.length!==1?"s":""} ({fc(quoteTotal,sym)}) · 👷 {ew.length} worker{ew.length!==1?"s":""} · 🛒 {ep.length} purchase{ep.length!==1?"s":""}</p>{blocked.total>0&&<p className="text-xs text-red-600 mt-1">Unpaid before close: invoice {fc(blocked.invDebt,sym)} · PO {fc(blocked.poDebt,sym)} · worker {fc(blocked.workerDebt,sym)}</p>}{ev.cancelReason&&<p className="text-xs text-red-600 mt-1">Cancelled: {ev.cancelReason}</p>}</div><div className="flex flex-wrap items-center gap-2 flex-shrink-0"><button onClick={()=>{setExpanded(isOpen&&expandSection==="quotations"?null:ev.id);setExpandSection("quotations");}} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700">Quotation</button><button onClick={()=>{setExpanded(isOpen&&expandSection==="purchases"?null:ev.id);setExpandSection("purchases");}} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700">Purchase</button>{!locked&&ev.status!=="Cancelled"&&<button onClick={()=>markDone(ev)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200">Mark Done</button>}{ev.status!=="Cancelled"&&!locked&&<button onClick={()=>setCancelEvent(ev)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Cancel</button>}</div></div>{isOpen&&<div className="border-t border-gray-100 p-4 md:p-5 bg-gray-50"><div className="flex flex-wrap gap-2 mb-4">{["quotations","purchases","workers"].map(x=><button key={x} onClick={()=>setExpandSection(x)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${expandSection===x?"bg-gray-900 text-white":"bg-white text-gray-600"}`}>{x}</button>)}</div>{expandSection==="quotations"&&<div className="space-y-3"><h4 className="font-bold text-gray-700">Rincian Quotation</h4>{eq.length?eq.map(q=><div key={q.id} className="bg-white rounded-xl p-3 border border-gray-100"><div className="flex flex-wrap justify-between gap-3"><div><b>{q.number}</b><p className="text-sm text-gray-600">{q.description||q.eventTitle||ev.title}</p></div><span className="font-bold text-blue-700">{fc(q.total,sym)}</span></div><div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">{(q.items||[]).map((it,i)=><div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-2 text-xs"><div className="flex justify-between gap-2"><b>{it.desc||it.item}</b><span>{it.qty} × {fc(it.price||it.unitPrice,sym)}</span></div>{itemNote(it)&&<p className="text-gray-500 mt-1">{itemNote(it)}</p>}<p className="text-right font-bold text-gray-700 mt-1">{fc(Number(it.qty||0)*Number(it.price||it.unitPrice||0),sym)}</p></div>)}</div>{!locked&&<button onClick={()=>createPOFromQuote(ev,q)} className="mt-3 text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl">Create PO from this Quotation</button>}</div>):<p className="text-sm text-gray-400">No quotations</p>}</div>}{expandSection==="purchases"&&<div className="space-y-3"><h4 className="font-bold text-gray-700">Rincian Purchase</h4><div className="bg-white rounded-xl p-3 border border-gray-100 flex flex-col md:flex-row gap-2 md:items-end"><label className="text-xs font-semibold text-gray-500 uppercase flex-1">Quotation untuk PO<select value={selectedQuote?.id||""} onChange={e=>setPoQuoteByEvent(p=>({...p,[ev.id]:Number(e.target.value)}))} className={inp+" mt-1"}><option value="">Pilih quotation event</option>{eq.map(q=><option key={q.id} value={q.id}>{q.number} — {fc(q.total,sym)}</option>)}</select></label><button disabled={!selectedQuote||locked} onClick={()=>createPOFromQuote(ev,selectedQuote)} className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">Create PO</button></div>{ep.length?ep.map(po=><div key={po.id} className="bg-white rounded-xl p-3 border border-gray-100"><div className="flex flex-wrap justify-between gap-3"><div><b>{po.poNumber}</b><p className="text-sm text-gray-600">{po.vendor} · {purchaseStatus(po)}</p></div><div className="text-right"><p className="font-bold text-emerald-700">{fc(purchaseTotal(po),sym)}</p><p className="text-xs text-gray-500">Paid {fc(purchasePaid(po),sym)} · Balance {fc(purchaseDebt(po),sym)}</p></div></div>{poItems(po).map((it,i)=><div key={i} className="text-xs text-gray-500 mt-1"><b>{it.item}</b> · {it.qty} x {fc(it.unitPrice,sym)}{(it.description||it.note)&&<p>{it.description||it.note}</p>}</div>)}{purchasePayments(po).length>0&&<p className="text-[11px] text-gray-500 mt-2">{purchasePayments(po).map(x=>`${x.label}: ${fc(x.amount,sym)}${x.status==="Voided"?" (Voided)":""}`).join(" · ")}</p>}</div>):<p className="text-sm text-gray-400">No purchase orders</p>}</div>}{expandSection==="workers"&&<div className="space-y-2"><h4 className="font-bold text-gray-700">Rincian Worker</h4>{ew.length?ew.map(row=>{const worker=workers.find(x=>x.id===row.workerId); const paid=workerPaidForEventRow(row); const pending=Math.max(0,Number(row.fee||0)-paid); return <div key={row.id} className="bg-white rounded-xl p-3 border border-gray-100 flex justify-between gap-3"><div><b>{worker?.name||'Worker'}</b><p className="text-sm text-gray-600">{row.jobDesc}</p></div><div className="text-right"><p className="font-bold text-orange-700">{fc(row.fee,sym)}</p><p className="text-xs text-gray-500">Paid {fc(paid,sym)} · Pending {fc(pending,sym)}</p></div></div>}):<p className="text-sm text-gray-400">No workers</p>} {!locked&&<EventWorkerRow eventId={ev.id} workers={workers} eventWorkers={eventWorkers} setEventWorkers={setEventWorkers}/>}</div>}</div>}</div>})}</div>
-    {cardEvents.length===0&&<p className="text-center text-gray-400 py-8 bg-white rounded-2xl border border-gray-100">No events found.</p>}
-  </div>;
+    <div className="space-y-4">{cardEvents.map(ev=>{ const l=linked(ev.id), ew=l.workers, ep=l.purchases, eq=l.quotes; const isOpen=expanded===ev.id; const quoteTotal=eq.reduce((s,q)=>s+Number(q.total||0),0); const blocked=closeBlockers(ev.id); const selectedQuote=eq.find(q=>q.id===poQuoteByEvent[ev.id])||eq[0]; const locked=isEventLocked(ev); const toggleEventCard=()=>{setExpanded(isOpen?null:ev.id);setExpandSection("quotations");}; return <div key={ev.id} onClick={toggleEventCard} role="button" aria-label={`Open event details ${ev.title}`} tabIndex={0} onKeyDown={e=>toggleCardKey(e,toggleEventCard)} className="bg-white rounded-2xl border border-gray-100 hover:shadow-sm transition overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-red-200"><div className="p-4 md:p-5 flex flex-col md:flex-row md:items-center gap-4"><div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center text-2xl flex-shrink-0">{typeIcon(ev.type)}</div><div className="flex-1 min-w-0"><div className="flex flex-wrap items-center gap-2 mb-0.5"><h3 className="font-bold text-gray-800">{ev.title}</h3><span className={`text-xs px-2 py-0.5 rounded-full font-medium ${sc(ev.status)}`}>{ev.status}</span>{locked&&<span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-bold">Locked</span>}</div><p className="text-sm text-gray-500">{ev.client||"No client"}{ev.venue?` · ${ev.venue}`:""}</p><p className="text-xs text-gray-400 mt-0.5">{fd(ev.date)} · 📋 {eq.length} quotation{eq.length!==1?"s":""} ({fc(quoteTotal,sym)}) · 👷 {ew.length} worker{ew.length!==1?"s":""} · 🛒 {ep.length} purchase{ep.length!==1?"s":""}</p>{blocked.total>0&&<p className="text-xs text-red-600 mt-1">Unpaid before close: invoice {fc(blocked.invDebt,sym)} · PO {fc(blocked.poDebt,sym)} · worker {fc(blocked.workerDebt,sym)}</p>}{ev.cancelReason&&<p className="text-xs text-red-600 mt-1">Cancelled: {ev.cancelReason}</p>}</div><div className="flex flex-wrap items-center gap-2 flex-shrink-0" onClick={e=>e.stopPropagation()}><button onClick={()=>{setExpanded(isOpen&&expandSection==="quotations"?null:ev.id);setExpandSection("quotations");}} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-100 text-blue-700">Quotation</button><button onClick={()=>{setExpanded(isOpen&&expandSection==="purchases"?null:ev.id);setExpandSection("purchases");}} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700">Purchase</button>{!locked&&ev.status!=="Cancelled"&&<button onClick={()=>markDone(ev)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-indigo-100 text-indigo-700 hover:bg-indigo-200">Mark Done</button>}{ev.status!=="Cancelled"&&!locked&&<button onClick={()=>setCancelEvent(ev)} className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-100 text-red-700 hover:bg-red-200">Cancel</button>}</div></div>{isOpen&&<div onClick={e=>e.stopPropagation()} className="border-t border-gray-100 p-4 md:p-5 bg-gray-50"><div className="flex flex-wrap gap-2 mb-4">{["quotations","purchases","workers"].map(x=><button key={x} onClick={()=>setExpandSection(x)} className={`px-3 py-1.5 rounded-lg text-xs font-bold ${expandSection===x?"bg-gray-900 text-white":"bg-white text-gray-600"}`}>{x}</button>)}</div>{expandSection==="quotations"&&<div className="space-y-3"><h4 className="font-bold text-gray-700">Rincian Quotation</h4>{eq.length?eq.map(q=><div key={q.id} className="bg-white rounded-xl p-3 border border-gray-100"><div className="flex flex-wrap justify-between gap-3"><div><b>{q.number}</b><p className="text-sm text-gray-600">{q.description||q.eventTitle||ev.title}</p></div><span className="font-bold text-blue-700">{fc(q.total,sym)}</span></div><div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">{(q.items||[]).map((it,i)=><div key={i} className="rounded-lg border border-gray-100 bg-gray-50 p-2 text-xs"><div className="flex justify-between gap-2"><b>{it.desc||it.item}</b><span>{it.qty} × {fc(it.price||it.unitPrice,sym)}</span></div>{itemNote(it)&&<p className="text-gray-500 mt-1">{itemNote(it)}</p>}<p className="text-right font-bold text-gray-700 mt-1">{fc(Number(it.qty||0)*Number(it.price||it.unitPrice||0),sym)}</p></div>)}</div>{!locked&&<button onClick={()=>createPOFromQuote(ev,q)} className="mt-3 text-xs font-bold bg-emerald-50 text-emerald-700 px-3 py-2 rounded-xl">Create PO from this Quotation</button>}</div>):<p className="text-sm text-gray-400">No quotations</p>}</div>}{expandSection==="purchases"&&<div className="space-y-3"><h4 className="font-bold text-gray-700">Rincian Purchase</h4><div className="bg-white rounded-xl p-3 border border-gray-100 flex flex-col md:flex-row gap-2 md:items-end"><label className="text-xs font-semibold text-gray-500 uppercase flex-1">Quotation untuk PO<select value={selectedQuote?.id||""} onChange={e=>setPoQuoteByEvent(p=>({...p,[ev.id]:Number(e.target.value)}))} className={inp+" mt-1"}><option value="">Pilih quotation event</option>{eq.map(q=><option key={q.id} value={q.id}>{q.number} — {fc(q.total,sym)}</option>)}</select></label><button disabled={!selectedQuote||locked} onClick={()=>createPOFromQuote(ev,selectedQuote)} className="bg-emerald-600 text-white px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50">Create PO</button></div>{ep.length?ep.map(po=><div key={po.id} className="bg-white rounded-xl p-3 border border-gray-100"><div className="flex flex-wrap justify-between gap-3"><div><b>{po.poNumber}</b><p className="text-sm text-gray-600">{po.vendor} · {purchaseStatus(po)}</p></div><div className="text-right"><p className="font-bold text-emerald-700">{fc(purchaseTotal(po),sym)}</p><p className="text-xs text-gray-500">Paid {fc(purchasePaid(po),sym)} · Balance {fc(purchaseDebt(po),sym)}</p></div></div>{poItems(po).map((it,i)=><div key={i} className="text-xs text-gray-500 mt-1"><b>{it.item}</b> · {it.qty} x {fc(it.unitPrice,sym)}{(it.description||it.note)&&<p>{it.description||it.note}</p>}</div>)}{purchasePayments(po).length>0&&<p className="text-[11px] text-gray-500 mt-2">{purchasePayments(po).map(x=>`${x.label}: ${fc(x.amount,sym)}${x.status==="Voided"?" (Voided)":""}`).join(" · ")}</p>}</div>):<p className="text-sm text-gray-400">No purchase orders</p>}</div>}{expandSection==="workers"&&<div className="space-y-2"><h4 className="font-bold text-gray-700">Rincian Worker</h4>{ew.length?ew.map(row=>{const worker=workers.find(x=>x.id===row.workerId); const paid=workerPaidForEventRow(row); const pending=Math.max(0,Number(row.fee||0)-paid); return <div key={row.id} className="bg-white rounded-xl p-3 border border-gray-100 flex justify-between gap-3"><div><b>{worker?.name||'Worker'}</b><p className="text-sm text-gray-600">{row.jobDesc}</p></div><div className="text-right"><p className="font-bold text-orange-700">{fc(row.fee,sym)}</p><p className="text-xs text-gray-500">Paid {fc(paid,sym)} · Pending {fc(pending,sym)}</p></div></div>}):<p className="text-sm text-gray-400">No workers</p>} {!locked&&<EventWorkerRow eventId={ev.id} workers={workers} eventWorkers={eventWorkers} setEventWorkers={setEventWorkers}/>}</div>}</div>}</div>})}</div>
+    {cardEvents.length===0&&<EmptyState>No events found.</EmptyState>}
+  </PageShell>;
 }
 
 
@@ -618,10 +868,6 @@ export default function App() {
   const [items,setItems] = useState(DEFAULT_STATE.items || []);
   const [workerPayments,setWorkerPayments] = useState(DEFAULT_STATE.workerPayments || []);
   const [pendingPO,setPendingPO] = useState(null);
-  const [clientSearch,setClientSearch] = useState("");
-  const [clientSort,setClientSort] = useState("name");
-  const [vendorSearch,setVendorSearch] = useState("");
-  const [vendorSort,setVendorSort] = useState("name");
   const [mobileMoreOpen,setMobileMoreOpen] = useState(false);
   const [syncStatus,setSyncStatus] = useState("loading");
   const [hydrated,setHydrated] = useState(false);
@@ -803,114 +1049,16 @@ export default function App() {
         )}
 
         {tab==="events"&&<EventsTab events={events} setEvents={setEvents} clients={clients} workers={workers} eventWorkers={eventWorkers} setEventWorkers={setEventWorkers} workerPayments={workerPayments} purchases={purchases} setPurchases={setPurchases} vendors={vendors} quotes={quotes} invoices={invoices} sym={sym} onCreatePO={(po)=>{setPendingPO(po);setTab("purchases");}}/>}
+        {tab==="quotes"&&<QuotationsTab quotes={quotes} setQuotes={setQuotes} events={events} setEvents={setEvents} setInvoices={setInvoices} setTab={setTab} setEditingQuote={setEditingQuote} setShowQuoteModal={setShowQuoteModal} setPrintQuote={setPrintQuote} setPendingPO={setPendingPO} sym={sym}/>}
 
-        {/* Quotes */}
-        {tab==="quotes"&&(
-          <div className="p-8">
-            <div className="flex items-center justify-between mb-6">
-              <div><h1 className="text-2xl font-bold text-gray-800">Quotations</h1><p className="text-gray-500 text-sm mt-0.5">{quotes.length} quotes · New quote creates a new event</p></div>
-              <button onClick={()=>{setEditingQuote(null);setShowQuoteModal(true);}} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-red-700">✨ New Quote</button>
-            </div>
-            <div className="space-y-3">
-              {quotes.map(q=>{ const qEvent=events.find(e=>e.id===Number(q.eventId)); const qLocked=isEventLocked(qEvent); return (
-                <div key={q.id} className="bg-white rounded-2xl border border-gray-100 p-5 hover:shadow-sm transition">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex flex-wrap items-center gap-3"><span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded-lg">{q.number}</span><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(q.status)}`}>{q.status}</span>{qLocked&&<span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-bold">Locked event</span>}</div>
-                    <span className="font-bold text-gray-800 text-lg">{fc(q.total,sym)}</span>
-                  </div>
-                  <p className="font-semibold text-gray-700">{q.client}</p>
-                  <p className="text-sm text-gray-500">{q.eventTitle||qEvent?.title||"No event"} · Generated {fd(q.generatedDate||q.date)}{q.eventDate?` · Event ${fd(q.eventDate)}`:""}</p>{q.description&&<p className="text-sm text-gray-600 mt-1">{q.description}</p>}<div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">{(q.items||[]).slice(0,4).map((it,i)=><div key={i} className="rounded-lg bg-gray-50 px-3 py-2 text-xs"><b>{it.desc||it.item}</b>{(it.note||it.description)&&<p className="text-gray-500 mt-0.5">{it.note||it.description}</p>}</div>)}</div>
-                  <div className="flex flex-wrap gap-3 mt-3">
-                    <button onClick={()=>setPrintQuote(q)} className="text-sm text-indigo-600 hover:underline font-medium">🖨️ Print</button>
-                    {!qLocked&&<button onClick={()=>{setEditingQuote(q);setShowQuoteModal(true);}} className="text-sm text-red-600 hover:underline font-medium">Edit</button>}
-                    {!qLocked&&<button onClick={()=>setQuotes(quotes.filter(x=>x.id!==q.id))} className="text-sm text-gray-400 hover:underline font-medium">Delete</button>}
-                    {!qLocked&&<button onClick={()=>{
-                      setInvoices(p=>{ const date=ymd(); return [...p,{id:Date.now(),number:docNo("invoice",date,p),client:q.client,eventId:q.eventId,eventTitle:q.eventTitle||"",date,due:"",total:q.total,paid:0,status:"Unpaid",attachments:q.attachments||[],items:(q.items||[]).map((it,i)=>({id:it.id||i,desc:it.desc||it.item,note:it.note||it.description||"",qty:it.qty||1,price:it.price??it.unitPrice??0}))}]; });
-                      setQuotes(p=>p.map(x=>x.id===q.id?{...x,status:"Approved"}:x));
-                      if(q.eventId) setEvents(p=>p.map(ev=>ev.id===q.eventId?{...ev,status:"Approved"}:ev));
-                      setTab("invoices");
-                    }} className="text-sm text-blue-600 hover:underline font-medium">→ Convert to Invoice</button>}
-                    {!qLocked&&<button onClick={()=>{setPendingPO({eventId:q.eventId||"", items:(q.items||[]).map((it,i)=>({id:Date.now()+i,item:it.desc||it.item,description:it.note||it.description||"",category:"Materials",qty:it.qty,unitPrice:it.price??it.unitPrice})), notes:`From quotation ${q.number}`}); setTab("purchases");}} className="text-sm text-emerald-600 hover:underline font-medium">Create PO</button>}
-                  </div>
-                </div>
-              );})}
-            </div>
-          </div>
-        )}
-
-        {/* Invoices */}
-        {tab==="invoices"&&(
-          <div className="p-4 md:p-8 overflow-x-hidden">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
-              <div><h1 className="text-2xl font-bold text-gray-800">Invoices</h1><p className="text-gray-500 text-sm mt-0.5">{invoices.length} invoices · expandable cards</p></div>
-              <button onClick={()=>{setEditingInvoice(null);setShowInvoiceModal(true);}} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-red-700">+ New Invoice</button>
-            </div>
-            <div className="space-y-3">
-              {invoices.map(inv=>{
-                const paid=invoicePaid(inv);
-                const balance=Number(inv.total||0)-paid;
-                const pct=inv.total>0?Math.min(100,(paid/Number(inv.total||0))*100):0;
-                const open=expandedInvoice===inv.id;
-                const invEvent=events.find(e=>e.id===Number(inv.eventId));
-                const invLocked=isEventLocked(invEvent);
-                return (
-                  <div key={inv.id} className="bg-white rounded-2xl border border-gray-100 p-5 hover:shadow-sm transition">
-                    <div className="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-2">
-                      <div className="min-w-0"><div className="flex flex-wrap items-center gap-3"><span className="font-mono text-sm bg-gray-100 px-2 py-1 rounded-lg">{inv.number}</span><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(inv.status)}`}>{inv.status}</span>{invLocked&&<span className="text-xs px-2 py-1 rounded-full bg-amber-100 text-amber-700 font-bold">Locked event</span>}</div><p className="font-semibold text-gray-700 mt-2">{inv.client}{(inv.eventTitle||invEvent?.title)?` — ${inv.eventTitle||invEvent?.title}`:""}</p><p className="text-sm text-gray-500">Issued: {fd(inv.date)}{inv.due?` · Due: ${fd(inv.due)}`:""}</p></div>
-                      <span className="font-bold text-gray-800 text-lg">{fc(inv.total,sym)}</span>
-                    </div>
-                    <div className="mt-3"><div className="flex justify-between text-xs text-gray-500 mb-1"><span>Paid: {fc(paid,sym)}</span><span>Balance: {fc(balance,sym)}</span></div>
-                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden"><div className="h-full bg-emerald-400 rounded-full" style={{width:`${pct}%`}}/></div></div>
-                    {(inv.payments||[]).length>0&&<div className="mt-2 text-[11px] text-gray-500">{(inv.payments||[]).map(x=>`${x.label}: ${fc(x.amount,sym)}`).join(" · ")}</div>}
-                    {(inv.items||[]).length>0&&<div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2">{(inv.items||[]).slice(0,4).map((it,i)=><div key={i} className="bg-gray-50 rounded-lg px-3 py-2 text-xs"><b>{it.desc||it.item}</b>{(it.note||it.description)&&<p className="text-gray-500 mt-0.5">{it.note||it.description}</p>}</div>)}</div>}
-                    <div className="flex flex-wrap gap-3 mt-3">
-                      <button onClick={()=>setExpandedInvoice(open?null:inv.id)} className="text-sm text-blue-600 hover:underline font-bold">{open?"Hide Details":"Details"}</button>
-                      <button onClick={()=>setPrintInvoice(inv)} className="text-sm text-indigo-600 hover:underline font-medium">🖨️ Print</button>
-                      {!invLocked&&<button onClick={()=>{setEditingInvoice(inv);setShowInvoiceModal(true);}} className="text-sm text-red-600 hover:underline font-medium">Edit</button>}
-                      {!invLocked&&<button onClick={()=>setPayInvoice(inv)} className="text-sm text-emerald-600 hover:underline font-bold">Add Payment</button>}
-                      {!invLocked&&<button onClick={()=>{setInvoices(invoices.filter(x=>x.id!==inv.id)); addAudit("invoice.delete", "invoice", inv.number, "deleted");}} className="text-sm text-gray-400 hover:underline font-medium">Delete</button>}
-                    </div>
-                    {open&&<div className="mt-4 border-t border-gray-100 pt-4 grid grid-cols-1 lg:grid-cols-2 gap-4"><div><p className="text-xs font-bold text-gray-500 uppercase mb-2">Invoice Items</p>{(inv.items||[]).length?(inv.items||[]).map((it,i)=><div key={i} className="bg-gray-50 rounded-xl p-3 text-sm mb-2"><div className="flex justify-between gap-2"><b>{it.desc||it.item}</b><span>{it.qty} × {fc(it.price??it.unitPrice,sym)}</span></div>{(it.note||it.description)&&<p className="text-xs text-gray-500 mt-1">{it.note||it.description}</p>}</div>):<p className="text-sm text-gray-400">No line items. Total entered manually.</p>}</div><div><p className="text-xs font-bold text-gray-500 uppercase mb-2">Payment Ledger</p>{(inv.payments||[]).length?(inv.payments||[]).map(x=><div key={x.id} className="bg-gray-50 rounded-xl p-3 text-sm mb-2 flex justify-between"><span>{x.label} · {fd(x.date)}</span><b>{fc(x.amount,sym)}</b></div>):<p className="text-sm text-gray-400">No payments yet.</p>}</div></div>}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-6"><AuditLogPanel auditLog={auditLog}/></div>
-          </div>
-        )}
+        {tab==="invoices"&&<InvoicesTab invoices={invoices} setInvoices={setInvoices} events={events} auditLog={auditLog} expandedInvoice={expandedInvoice} setExpandedInvoice={setExpandedInvoice} setEditingInvoice={setEditingInvoice} setShowInvoiceModal={setShowInvoiceModal} setPrintInvoice={setPrintInvoice} setPayInvoice={setPayInvoice} addAudit={addAudit} invoicePaid={invoicePaid} sym={sym}/>}
 
         {tab==="purchases"&&<PurchasesTab events={events} vendors={vendors} purchases={purchases} setPurchases={setPurchases} addAudit={addAudit} auditLog={auditLog} sym={sym} initialPO={pendingPO} onInitialPOUsed={()=>setPendingPO(null)} onPrintPO={(po)=>setPrintPO(po)} onItemsAdded={(rows)=>setItems(prev=>{const list=[...(prev||[])]; rows.forEach(it=>{const name=(it.item||it.name||"").trim(); if(name&&!list.some(x=>(x.name||"").toLowerCase()===name.toLowerCase())) list.push({id:Date.now()+Math.random(),name,type:"Purchase",price:Number(it.unitPrice||it.price||0)});}); return list;})}/>}
         {tab==="finance"&&<FinanceTab events={events} invoices={invoices} purchases={purchases} eventWorkers={eventWorkers} vendors={vendors} auditLog={auditLog} sym={sym}/>}
         {tab==="reports"&&<ReportsTab events={events} quotes={quotes} invoices={invoices} purchases={purchases} eventWorkers={eventWorkers} clients={clients} vendors={vendors} workers={workers} company={company} auditLog={auditLog} sym={sym} onPrint={(category)=>setPrintReport(category)}/>}
         {tab==="workers"&&<WorkersTab workers={workers} setWorkers={setWorkers} events={events} eventWorkers={eventWorkers} workerPayments={workerPayments} setWorkerPayments={setWorkerPayments} sym={sym}/>}
-
-        {/* Clients */}
-        {tab==="clients"&&(
-          <div className="p-4 md:p-8 overflow-x-hidden">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
-              <div><h1 className="text-2xl font-bold text-gray-800">Clients</h1><p className="text-gray-500 text-sm mt-0.5">{clients.length} clients · compact cards</p></div>
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2"><input placeholder="Search clients" value={clientSearch} onChange={e=>setClientSearch(e.target.value)} className={inp}/><select aria-label="Client sort" value={clientSort} onChange={e=>setClientSort(e.target.value)} className={inp}><option value="name">Sort: Name</option><option value="events">Sort: Events</option><option value="repeat">Sort: Repeat</option><option value="latest">Sort: Latest Event</option></select><button onClick={()=>setEditClient({})} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-red-700">+ Add Client</button></div>
-            </div>
-            <div className="space-y-3">
-              {clients.filter(c=>!clientSearch||[c.name,c.email,c.phone,c.type].join(" ").toLowerCase().includes(clientSearch.toLowerCase())).sort((a,b)=>{ const ae=events.filter(e=>e.client===a.name), be=events.filter(e=>e.client===b.name); if(clientSort==="events") return be.length-ae.length; if(clientSort==="repeat") return Math.max(0,be.length-1)-Math.max(0,ae.length-1); if(clientSort==="latest") return String(be.map(e=>e.date).sort().pop()||"").localeCompare(String(ae.map(e=>e.date).sort().pop()||"")); return String(a.name).localeCompare(String(b.name)); }).map(c=>{ const clientEvents=events.filter(e=>e.client===c.name); const clientQuotes=quotes.filter(q=>q.client===c.name); const clientInvoices=invoices.filter(i=>i.client===c.name); const repeatOrders=Math.max(0,clientEvents.length-1); const lastEvent=clientEvents.map(e=>e.date).filter(Boolean).sort().pop(); return <div key={c.id} className="bg-white rounded-2xl border border-gray-100 p-4"><div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3"><div className="flex items-center gap-3"><Avatar name={c.name} size="sm" color="from-red-500 to-red-700"/><div><p className="font-bold text-gray-800">{c.name}</p><p className="text-xs text-gray-500">{c.address||"—"}</p><p className="text-xs text-gray-400">{c.phone||c.email||"—"}{c.phone&&c.email?` · ${c.email}`:""}</p></div></div><div className="grid grid-cols-3 gap-2 text-xs"><p>EVENTS<br/><b>{clientEvents.length}</b></p><p>QUOTES<br/><b>{clientQuotes.length}</b></p><p>INVOICES<br/><b>{clientInvoices.length}</b></p></div><div className="lg:text-right"><span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">{c.type}</span><p className="text-xs text-gray-500 mt-2">Repeat {repeatOrders}{lastEvent?` · Last ${fd(lastEvent)}`:""}</p></div></div><div className="flex flex-wrap gap-2 mt-3"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">ACTIONS</span><button onClick={()=>setEditClient(c)} className="text-xs text-red-600 font-bold">Edit</button><button onClick={()=>{setClients(clients.filter(x=>x.id!==c.id)); addAudit("client.remove", "client", c.name, "removed");}} className="text-xs text-gray-400 font-bold">Remove</button></div></div>})}
-              {clients.filter(c=>!clientSearch||[c.name,c.email,c.phone,c.type].join(" ").toLowerCase().includes(clientSearch.toLowerCase())).length===0&&<p className="text-sm text-gray-400 bg-white rounded-2xl p-4 border border-gray-100">No results</p>}
-            </div>
-          </div>
-        )}
-
-        {/* Vendors */}
-        {tab==="vendors"&&(
-          <div className="p-4 md:p-8 overflow-x-hidden">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-6">
-              <div><h1 className="text-2xl font-bold text-gray-800">Vendors & Suppliers</h1><p className="text-gray-500 text-sm mt-0.5">{vendors.length} vendors · compact cards</p></div>
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2"><input placeholder="Search vendors" value={vendorSearch} onChange={e=>setVendorSearch(e.target.value)} className={inp}/><select aria-label="Vendor sort" value={vendorSort} onChange={e=>setVendorSort(e.target.value)} className={inp}><option value="name">Sort: Name</option><option value="category">Sort: Category</option><option value="rate">Sort: Rate</option><option value="status">Sort: Status</option></select><button onClick={()=>setEditVendor({})} className="bg-red-600 text-white px-5 py-2.5 rounded-xl font-semibold text-sm hover:bg-red-700">+ Add Vendor</button></div>
-            </div>
-            <div className="space-y-3">
-              {vendors.filter(v=>!vendorSearch||[v.name,v.email,v.phone,v.category].join(" ").toLowerCase().includes(vendorSearch.toLowerCase())).sort((a,b)=>{ if(vendorSort==="rate") return Number(b.rate||0)-Number(a.rate||0); if(vendorSort==="category") return String(a.category||"").localeCompare(String(b.category||"")); if(vendorSort==="status") return String(a.status||"").localeCompare(String(b.status||"")); return String(a.name||"").localeCompare(String(b.name||"")); }).map(v=><div key={v.id} className="bg-white rounded-2xl border border-gray-100 p-4"><div className="grid grid-cols-1 lg:grid-cols-[1.2fr_1fr_auto] gap-3"><div className="flex items-center gap-3"><Avatar name={v.name} size="sm" color="from-indigo-500 to-violet-600"/><div><p className="font-bold text-gray-800">{v.name}</p><p className="text-xs text-gray-500">{v.address||"—"}</p><p className="text-xs text-gray-400">{v.phone||v.email||"—"}{v.phone&&v.email?` · ${v.email}`:""}</p></div></div><div><span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full">{v.category}</span><p className="text-sm text-gray-500 mt-2">Base Rate <b>{fc(v.rate,sym)}</b></p></div><div className="lg:text-right"><span className={`text-xs px-2 py-1 rounded-full font-medium ${sc(v.status)}`}>{v.status}</span></div></div><div className="flex flex-wrap gap-2 mt-3"><span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">ACTIONS</span><button onClick={()=>setEditVendor(v)} className="text-xs text-red-600 font-bold">Edit</button><button onClick={()=>{setVendors(vendors.filter(x=>x.id!==v.id)); addAudit("vendor.remove", "vendor", v.name, "removed");}} className="text-xs text-gray-400 font-bold">Remove</button></div></div>)}
-              {vendors.filter(v=>!vendorSearch||[v.name,v.email,v.phone,v.category].join(" ").toLowerCase().includes(vendorSearch.toLowerCase())).length===0&&<p className="text-sm text-gray-400 bg-white rounded-2xl p-4 border border-gray-100">No results</p>}
-            </div>
-          </div>
-        )}
+        {tab==="clients"&&<ClientsTab clients={clients} setClients={setClients} events={events} quotes={quotes} invoices={invoices} setEditClient={setEditClient} addAudit={addAudit} sym={sym}/>}
+        {tab==="vendors"&&<VendorsTab vendors={vendors} setVendors={setVendors} purchases={purchases} setEditVendor={setEditVendor} addAudit={addAudit} sym={sym}/>}
 
 
         {tab==="settings"&&<SettingsTab company={company} setCompany={setCompany} currency={currency} setCurrency={setCurrency}/>}
